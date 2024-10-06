@@ -50,8 +50,8 @@ const deployerAccount = await WalletClient.getAccountFromSecretKey(secretKey);
         coins: fromMAS(0.1), // coins for deployment
         //AS19KVkFZRH31iuVGKU1peawYpuUkRwRiZCmHaQBmPgEXpCoS2TJ
         args: new Args().addString('AS12FW5Rs5YN2zdpEnqwj4iHUUPt9R4Eqjq2qtpJFNKW3mn33RuLU')
-        .addString("AS1nrNSX1k6JbZMHqYXLBbLshkAmhZr8ExLTo1B4r7HLLjmQzeFu")
-        .addString("AS12mzn5w5bnRoNBwzfDCcVMmNVog2uNWjfaazu4q5BSajLJ8FSfX")
+        .addString("AS12TTZxswgyCGFbYStiywKYzvJWSdXvQTrfHu5gfSQRXk5wduZpX")
+        .addString("AS1bpSi5NGb8vp4BAt5KXsMbuMWnCh4X9RMomWp4KqH6Ht9ASdWN")
         .addU256(75n)
        } as ISCData,
       // Additional smart contracts can be added here for deployment
