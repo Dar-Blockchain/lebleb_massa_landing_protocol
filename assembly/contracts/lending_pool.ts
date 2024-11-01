@@ -184,16 +184,23 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
     assert(u256.add(totalBorrowingPrice,totalDebtValue) <= maxBorrowableAmount, "Exceeds max borrowable limit");
     generateEvent("borrow4")
 
-    let updatedDebtAssets: Array<string> = userDebtAssets.contains(userAddress)
-        ? new Args(userDebtAssets.getSome(userAddress)).nextStringArray().expect("Error deserializing debt assets")
-        : [];
-        generateEvent("borrow5")
+    let updatedDebtAssets: Array<string>;
+
+    if (userDebtAssets.contains(userAddress)) {
+        updatedDebtAssets = deserializeStringArray(userDebtAssets.getSome(userAddress));
+    } else {
+        updatedDebtAssets = [];
+    }
+   
+    generateEvent("borrow6")
+
 
     if (!updatedDebtAssets.includes(borrowAsset)) {
         updatedDebtAssets.push(borrowAsset);
-        userDebtAssets.set(userAddress, new Args().add(updatedDebtAssets).serialize());
+        userDebtAssets.set(userAddress, serializeStringArray(updatedDebtAssets));
     }
-    generateEvent("borrow6")
+        generateEvent("borrow5")
+
 
     const borrowReserveAddress = bytesToString(getReserve(new Args().add(borrowAsset).serialize()));
     generateEvent("borrow7")
