@@ -14,6 +14,8 @@ const USDT=new Address("AS12N76WPYB3QNYKGhV2jZuQs1djdhNJLQgnm7m52pHWecvvj1fCQ");
 
 
 export const BORROWING_LIMIT_PERCENT = stringToBytes('BORROWING_LIMIT_PERCENT');
+const IS_INITIALIZED = stringToBytes("is_initialized"); // Tracks if constructor was called
+const ADMIN_ADDRESS = stringToBytes("admin_address"); // Stores the admin address
 
 
 
@@ -33,7 +35,17 @@ function deserializeStringArray(data: StaticArray<u8>): Array<string> {
 }
 
 
+// Function to restrict access to the admin
+function onlyAdmin(): void {
+    const admin = Storage.get(ADMIN_ADDRESS);
+    assert(admin != null && bytesToString(admin) == Context.caller().toString(), "Unauthorized: Only admin can perform this action");
+}
 export function constructor(binaryArgs: StaticArray<u8>): void{
+
+    assert(!Storage.has(IS_INITIALIZED), "Constructor already called"); // Ensures it's only called once
+    Storage.set(ADMIN_ADDRESS, stringToBytes(Context.caller().toString()));
+    Storage.set(IS_INITIALIZED, stringToBytes("true"));
+
     const args = new Args(binaryArgs);
 
     
@@ -53,6 +65,7 @@ export function getTokenPrice(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     return f64ToBytes(prices);
 }
 export function addReserve(binaryArgs: StaticArray<u8>): void {
+    onlyAdmin()
     const args = new Args(binaryArgs);
     const assetAddress = args.nextString().expect("Error while getting asset address");
     const reserveAddress = args.nextString().expect("Error while getting reserve address");
@@ -103,116 +116,92 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
     call(new Address(AtokenAddress), "mint", new Args().add(Context.caller().toString()).add(amount), 4_000_000);
 
 }
-// Utility function to calculate the total collateral value of a user
-function calculateTotalCollateralValue(userAddress: string): f64 {
-    let totalCollateralValue: f64 = 0;
-    
-    // Fetch user's collateral assets
+// Use u256 for all calculations to prevent overflow or precision loss
+function calculateTotalCollateralValue(userAddress: string): u256 {
+    let totalCollateralValue = u256.Zero;
     const collateralAssetsSerialized = userCollateralAssets.getSome(userAddress);
-    assert(collateralAssetsSerialized != null, "User has no collateral assets");
+    const collateralAssets = new Args(collateralAssetsSerialized).nextStringArray().expect("Failed to deserialize collateral assets");
 
-    const collateralAssets = deserializeStringArray(collateralAssetsSerialized);
-    
     for (let i = 0; i < collateralAssets.length; i++) {
         const collateralAsset = collateralAssets[i];
         const reserveAddress = bytesToString(getReserve(new Args().add(collateralAsset).serialize()));
         const reserve = new IReserve(new Address(reserveAddress));
 
-        // Get user's collateral amount for the asset
-        const collateralAmount = bytesToU64(u256ToBytes(reserve.getUserCollateralAmount(userAddress)));
-
-        // Get the price of the collateral asset relative to the reference asset (e.g., USDT)
+        const collateralAmount = reserve.getUserCollateralAmount(userAddress);
         const collateralValue = _getTokenPrice(new Address(collateralAsset), USDT);
 
-        totalCollateralValue += collateralValue * f64(collateralAmount);
+        // Ensure calculations stay within u256 type
+        totalCollateralValue = u256.add(totalCollateralValue, u256.mul(u256.fromF64(collateralValue), collateralAmount));
     }
 
     return totalCollateralValue;
 }
 
-// Utility function to calculate the total debt value of a user
-function calculateTotalDebtValue(userAddress: string): f64 {
-    let totalDebtValue: f64 = 0;
 
-    // Fetch user's debt assets
-   
+function calculateTotalDebtValue(userAddress: string): u256 {
+    let totalDebtValue = u256.Zero;
 
     if (userDebtAssets.contains(userAddress)) {
-        let debtAssetsSerialized = userDebtAssets.getSome(userAddress);
+        const debtAssetsSerialized = userDebtAssets.getSome(userAddress);
+        const debtAssets = new Args(debtAssetsSerialized).nextStringArray().expect("Failed to deserialize debt assets");
 
-        const debtAssets = deserializeStringArray(debtAssetsSerialized);
-        
         for (let i = 0; i < debtAssets.length; i++) {
             const debtAsset = debtAssets[i];
             const reserveAddress = bytesToString(getReserve(new Args().add(debtAsset).serialize()));
             const reserve = new IReserve(new Address(reserveAddress));
 
-            // Get user's debt amount for the asset
-            const debtAmount = bytesToU64(u256ToBytes(reserve.getUserDebtAmount(userAddress)));
-
-            // Get the price of the debt asset relative to the reference asset (e.g., USDT)
+            const debtAmount = reserve.getUserDebtAmount(userAddress);
             const debtValue = _getTokenPrice(new Address(debtAsset), USDT);
 
-            totalDebtValue += debtValue * f64(debtAmount);
+            totalDebtValue = u256.add(totalDebtValue, u256.mul(u256.fromF64(debtValue), debtAmount));
         }
     }
 
     return totalDebtValue;
 }
 
+
 export function borrow(binaryArgs: StaticArray<u8>): void {
     const args = new Args(binaryArgs);
     const borrowAsset = args.nextString().expect("Expected borrow asset");
     const amount = args.nextU256().expect("Expected amount");
     const userAddress = Context.caller().toString();
-
-    // Fetch user's collateral assets in one go
-    const collateralAssetsSerialized = userCollateralAssets.getSome(userAddress);
-    assert(collateralAssetsSerialized != null, "User has no collateral assets");
-
-    const collateralAssets = deserializeStringArray(collateralAssetsSerialized);
-    generateEvent("here"+collateralAssets.toString())
+    generateEvent("borrow1")
     const totalCollateralValue = calculateTotalCollateralValue(userAddress);
-    generateEvent("Total collateral value: " + totalCollateralValue.toString());
+    generateEvent("borrow2")
 
-    // Calculate total debt value
     const totalDebtValue = calculateTotalDebtValue(userAddress);
-    generateEvent("Total debt value: " + totalDebtValue.toString());
-    const _borrowingPrice = _getTokenPrice(new Address(borrowAsset),USDT)
+    generateEvent("borrow3")
 
-    // Calculate maximum borrowable amount (25% of total collateral value)
-    generateEvent("here+++")
+    const _borrowingPrice = _getTokenPrice(new Address(borrowAsset), USDT);
+    generateEvent("borrow4")
 
-    let Borrow = bytesToU64(Storage.get(BORROWING_LIMIT_PERCENT))
-    let amountU64=bytesToU64(u256ToBytes(amount))
-    let totalBorrowingPrice = _borrowingPrice*f64(amountU64)
-    const maxBorrowableAmount = f64(totalCollateralValue)*f64(Borrow)/100;
-    assert(totalBorrowingPrice+totalDebtValue <= maxBorrowableAmount, "Borrow amount exceeds 25% of total collateral value");
+    const totalBorrowingPrice = u256.mul(u256.fromF64(_borrowingPrice), amount);
+    const maxBorrowableAmount = u256.div(u256.mul(totalCollateralValue, bytesToU256(BORROWING_LIMIT_PERCENT)), u256.fromU64(100));
+    generateEvent("borrow4")
 
-    // Update user's debt assets efficiently
-    generateEvent("here++")
+    // Using <= for the comparison instead of lte
+    assert(u256.add(totalBorrowingPrice,totalDebtValue) <= maxBorrowableAmount, "Exceeds max borrowable limit");
+    generateEvent("borrow4")
 
-    let updatedDebtAssets: Array<string>;
-
-    if (userDebtAssets.contains(userAddress)) {
-        updatedDebtAssets = deserializeStringArray(userDebtAssets.getSome(userAddress));
-    } else {
-        updatedDebtAssets = [];
-    }
-   
-    
+    let updatedDebtAssets: Array<string> = userDebtAssets.contains(userAddress)
+        ? new Args(userDebtAssets.getSome(userAddress)).nextStringArray().expect("Error deserializing debt assets")
+        : [];
+        generateEvent("borrow5")
 
     if (!updatedDebtAssets.includes(borrowAsset)) {
         updatedDebtAssets.push(borrowAsset);
-        userDebtAssets.set(userAddress, serializeStringArray(updatedDebtAssets));
+        userDebtAssets.set(userAddress, new Args().add(updatedDebtAssets).serialize());
     }
-    generateEvent("here")
-    // Call the borrow function on the reserve
-    const borrowReserveAddress = bytesToString(getReserve(new Args().add(borrowAsset).serialize()));
-    call(new Address(borrowReserveAddress), "borrow", new Args().add(amount).add(Context.caller().toString()).add(collateralAssets), 4_000_000);
+    generateEvent("borrow6")
 
+    const borrowReserveAddress = bytesToString(getReserve(new Args().add(borrowAsset).serialize()));
+    generateEvent("borrow7")
+
+    call(new Address(borrowReserveAddress), "borrow", new Args().add(amount).add(userAddress), 4_000_000);
     generateEvent("Borrowed " + amount.toString() + " of " + borrowAsset + " by " + userAddress);
 }
+
 function remove<T>(array: Array<T>, element: T): Array<T> {
     const index = array.indexOf(element);
     if (index !== -1) {
@@ -289,7 +278,6 @@ export function getRewardsForAsset(binaryArgs: StaticArray<u8>): void {
 
     generateEvent("Rewards minted for user: " + userAddress + " in aTokens, amount: " + rewardsAmount.toString());
 }
-
 
 
 

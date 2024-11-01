@@ -31,6 +31,7 @@ export const PRECISION = stringToBytes('PRECISION')
 
 
 export const LAST_REWARD_TIME_KEY: StaticArray<u8> = [0x14];
+let inFunction = false; // Reentrancy guard
 
 
 // Convert the rates by multiplying by the scaling factor and store them as u256
@@ -136,6 +137,8 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
     const args = new Args(binaryArgs);
     const amount = args.nextU256().expect("Expected the deposit amount");
     const sender = args.nextString().expect("Expected the sender address");
+    assert(amount > u256.Zero, "Deposit amount must be greater than zero");
+
     generateEvent("amount XXXXXX : " + amount.toString());
 
     const reserve = Storage.get(_ReserveBalanceKey);
@@ -169,6 +172,8 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
 
 
 export function borrow(binaryArgs: StaticArray<u8>): void {
+    assert(!inFunction, "Reentrancy detected");
+    inFunction = true;
     const lendingPoolAddress = Storage.get(Lending_Pool_Address);
     assert(lendingPoolAddress == Context.caller().toString(), "Only Lending Pool can call borrow");
 
@@ -213,32 +218,10 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
 
     generateEvent("Borrowed " + amount.toString() + " to " + borrower);
     generateEvent("Locked " + amount.toString() + " of collateral from " + borrower);
+    inFunction = true;
+
 }
-function calculateAccruedInterestForRepay(borrower: string): u256 {
-    // Get the current borrow rate (APR)
-    const borrowRateBytes = Storage.get(borrow_coef);
-    const borrowRate = bytesToF64(borrowRateBytes);  // Convert to f64
 
-    // Get the user's total borrowed amount
-    assert(userBorrows.contains(borrower), "No borrow found for the user");
-    const principal = userBorrows.getSome(borrower);
-
-    // Calculate the time elapsed since the last interest update
-    const lastInterestTime = getLastRewardTime(borrower);  // Reuse this function to get the last interest calculation time
-    const currentTime = u256.fromU64(Context.timestamp());
-    const timeDifference = u256.sub(currentTime, lastInterestTime);
-
-    // Convert time difference to seconds (assuming Context.timestamp() is in milliseconds)
-    const timeDifferenceInSeconds = bytesToU64(u256ToBytes(timeDifference)) / 1000;
-
-    // Calculate the interest using the formula: Interest = Principal * Rate * (Time / (365 * 24 * 3600))
-    const principal_u64 = bytesToU64(u256ToBytes(principal));
-    const interest = u256.fromF64(f64(principal_u64) * borrowRate * f64(timeDifferenceInSeconds) / (365 * 24 * 3600));
-
-    generateEvent("Accrued interest for borrower: " + borrower + " is " + interest.toString());
-
-    return interest;
-}
 
 export function repay(binaryArgs: StaticArray<u8>): void {
     const lendingPoolAddress = Storage.get(Lending_Pool_Address);
@@ -267,6 +250,8 @@ export function repay(binaryArgs: StaticArray<u8>): void {
         userBorrows.set(borrower, newUserBorrowed);
     }
     let totalBorrowed = getTotalBorrowedTokens();
+    assert(amount <= totalBorrowed, "amount acceed the totalBorrowed");
+
     totalBorrowed = u256.sub(totalBorrowed, amount);
     Storage.set(TOTAL_BORROWED_TOKENS_KEY, u256ToBytes(totalBorrowed));
     // Update the reserve balance
@@ -297,61 +282,24 @@ function getTotalBorrowedTokens(): u256 {
 
 
 function calculateRates(): RateInfo {
-    const totalLiquidity = getTotalDisponibleTokens();  // Available tokens in reserve
-    const totalBorrowed = getTotalBorrowedTokens();     // Borrowed tokens in reserve
+    const totalAssets = u256.add(getTotalDisponibleTokens(), getTotalBorrowedTokens());
+    const utilization = u256.div(u256.mul(getTotalBorrowedTokens(), SCALE_FACTOR), totalAssets);
 
-    // Scaling factor to handle fractional utilization (e.g., scale to 10000 for 4 decimal places)
-
-    // Ensure totalLiquidity is not zero to avoid division by zero
-    if (totalLiquidity == u256.Zero) {
-        return new RateInfo(MIN_BORROW_RATE, MIN_REWARD_RATE);  // Return the minimum rates if no liquidity
-    }
-
-    // Calculate utilization: (totalBorrowed / totalLiquidity) * SCALE_FACTOR
-    const utilization = u256.div(u256.mul(totalBorrowed, SCALE_FACTOR), totalLiquidity);
-
-    // Define the min and max rates (multiplied by SCALE_FACTOR for integer math)
-    const minBorrowRate = MIN_BORROW_RATE
-    
-    const maxBorrowRate =MAX_BORROW_RATE 
-    
-    const minRewardRate = MIN_REWARD_RATE
-    
-    const maxRewardRate = MAX_REWARD_RATE
-
-    // Calculate the borrowRate and rewardRate based on utilization
     const borrowRate = u256.add(
-        minBorrowRate,
-        u256.div(u256.mul(u256.sub(maxBorrowRate, minBorrowRate), utilization), SCALE_FACTOR)
+        MIN_BORROW_RATE,
+        u256.div(u256.mul(u256.sub(MAX_BORROW_RATE, MIN_BORROW_RATE), utilization), SCALE_FACTOR)
     );
 
-    const rewardRate = u256.add(
-        minRewardRate,
-        u256.div(u256.mul(u256.sub(maxRewardRate, minRewardRate), utilization), SCALE_FACTOR)
+    let rewardRate = u256.add(
+        MIN_REWARD_RATE,
+        u256.div(u256.mul(u256.sub(MAX_REWARD_RATE, MIN_REWARD_RATE), utilization), SCALE_FACTOR)
     );
-    const precision=Storage.get(PRECISION);
-    const precision_decimal=bytesToU32(precision)
-    // Ensure rewardRate is always less than the borrowRate (rewardRate = 90% of borrowRate if greater)
-    let finalRewardRate:u256;
+
     if (rewardRate >= borrowRate) {
-        finalRewardRate = u256.div(u256.mul(borrowRate, u256.fromU64(90)), u256.fromU64(100));  // Reward = 90% of borrowRate
+        rewardRate = u256.div(u256.mul(borrowRate, u256.fromU64(90)), u256.fromU64(100));
     }
-    
-     finalRewardRate = u256.mul(rewardRate,u256.fromU64(10**precision_decimal))
 
-    // Log the calculated rates (for debugging)
-    generateEvent("Borrow Rate: " + borrowRate.toString());
-    generateEvent("Reward Rate: " + finalRewardRate.toString());
-
-    // Return the rates, converting them back to percentages by dividing by SCALE_FACTOR
-    return new RateInfo(
-        
-        borrowRate,
-   
-        
-        finalRewardRate
-                 
-    );
+    return new RateInfo(borrowRate, rewardRate);
 }
 
 export function calculateUserRewards(binaryArgs: StaticArray<u8>): StaticArray<u8> {
