@@ -10,6 +10,8 @@
         "deploy": "npm run build && tsx src/deploy.ts",
         "deployReserve": "npm run build && tsx src/deployReserve.ts",
         "deployLendingPool": "npm run build && tsx src/deployLending.ts",
+        "deployoracle": "npm run build && tsx src/oracleDeploy.ts",
+
         "atokenDeploy": "npm run build && tsx src/aTokenDeploy.ts",
         "prettier": "prettier '**/src/**/*.ts' --check && as-prettier --check assembly",
         "prettier:fix": "prettier '**/src/**/*.ts' --write && as-prettier --write assembly",

@@ -17,6 +17,7 @@ export const BORROWING_LIMIT_PERCENT = stringToBytes('BORROWING_LIMIT_PERCENT');
 const IS_INITIALIZED = stringToBytes("is_initialized"); // Tracks if constructor was called
 const ADMIN_ADDRESS = stringToBytes("admin_address"); // Stores the admin address
 
+const Oracle_Storage = stringToBytes("Oracle_Storage"); // Stores the admin address
 
 
 const userDebtAmounts = new PersistentMap<string, u256>('user_debt_amounts');
@@ -46,24 +47,32 @@ export function constructor(binaryArgs: StaticArray<u8>): void{
     Storage.set(ADMIN_ADDRESS, stringToBytes(Context.caller().toString()));
     Storage.set(IS_INITIALIZED, stringToBytes("true"));
 
+    
+
     const args = new Args(binaryArgs);
 
     
     const BrrowRate = args.nextU256().expect("Borrow Rate required");
+    const OracleAddress = args.nextString().expect("Borrow Rate required");
+
     Storage.set(BORROWING_LIMIT_PERCENT,u256ToBytes(BrrowRate))
+    Storage.set(Oracle_Storage, stringToBytes(OracleAddress));
+
 
 
 }
-export function getTokenPrice(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+/*export function getTokenPrice(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     const args = new Args(binaryArgs);
     const tokenA = args.nextString().expect("Error while getting asset address");
-    const tokenB = args.nextString().expect("Error while getting reserve address");
-    const amount=args.nextU256().expect("Error while getting reserve address");
-    let  prices = _getTokenPrice(new Address(tokenA),new Address(tokenB)) 
-    generateEvent("price token is "+prices.toString());
+    const oracleAddress = Storage.get(Oracle_Storage);
+    let  prices = _getTokenPrice(tokenA,bytesToString(oracleAddress)) 
+    generateEvent("price token is "+prices);
 
     return f64ToBytes(prices);
-}
+}*/
+
+
+
 export function addReserve(binaryArgs: StaticArray<u8>): void {
     onlyAdmin()
     const args = new Args(binaryArgs);
@@ -128,8 +137,9 @@ function calculateTotalCollateralValue(userAddress: string): u256 {
         const reserve = new IReserve(new Address(reserveAddress));
 
         const collateralAmount = reserve.getUserCollateralAmount(userAddress);
-        const collateralValue = _getTokenPrice(new Address(collateralAsset), USDT);
-
+        const oracleAddress = Storage.get(Oracle_Storage);
+        let  prices = _getTokenPrice(collateralAsset,bytesToString(oracleAddress)) 
+        const collateralValue = bytesToF64(stringToBytes(prices));
         // Ensure calculations stay within u256 type
         totalCollateralValue = u256.add(totalCollateralValue, u256.mul(u256.fromF64(collateralValue), collateralAmount));
     }
@@ -151,7 +161,9 @@ function calculateTotalDebtValue(userAddress: string): u256 {
             const reserve = new IReserve(new Address(reserveAddress));
 
             const debtAmount = reserve.getUserDebtAmount(userAddress);
-            const debtValue = _getTokenPrice(new Address(debtAsset), USDT);
+            const oracleAddress = Storage.get(Oracle_Storage);
+            let  prices = _getTokenPrice(debtAsset,bytesToString(oracleAddress)) 
+            const debtValue = bytesToF64(stringToBytes(prices));
 
             totalDebtValue = u256.add(totalDebtValue, u256.mul(u256.fromF64(debtValue), debtAmount));
         }
@@ -172,17 +184,18 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
 
     const totalDebtValue = calculateTotalDebtValue(userAddress);
     generateEvent("borrow3")
-
-    const _borrowingPrice = _getTokenPrice(new Address(borrowAsset), USDT);
+    const oracleAddress = Storage.get(Oracle_Storage);
+    let  prices = _getTokenPrice(borrowAsset,bytesToString(oracleAddress)) 
+    const _borrowingPrice = bytesToF64(stringToBytes(prices));
     generateEvent("borrow4")
-
+    const borrowingLimitRate = Storage.get(BORROWING_LIMIT_PERCENT)
     const totalBorrowingPrice = u256.mul(u256.fromF64(_borrowingPrice), amount);
-    const maxBorrowableAmount = u256.div(u256.mul(totalCollateralValue, bytesToU256(BORROWING_LIMIT_PERCENT)), u256.fromU64(100));
-    generateEvent("borrow4")
+    const maxBorrowableAmount = u256.div(u256.mul(totalCollateralValue, bytesToU256(borrowingLimitRate)), u256.fromU64(100));
+    generateEvent("borrow14")
 
     // Using <= for the comparison instead of lte
     assert(u256.add(totalBorrowingPrice,totalDebtValue) <= maxBorrowableAmount, "Exceeds max borrowable limit");
-    generateEvent("borrow4")
+    generateEvent("borrow41")
 
     let updatedDebtAssets: Array<string>;
 

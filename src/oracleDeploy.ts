@@ -46,19 +46,16 @@ const deployerAccount = await WalletClient.getAccountFromSecretKey(secretKey);
     deployerAccount, // account deploying the smart contract(s)
     [
       {
-        data: readFileSync(path.join(__dirname, 'build', 'Reserve.wasm')), // smart contract bytecode
-        coins: fromMAS(0.1), // coins for deployment
-        //AS19KVkFZRH31iuVGKU1peawYpuUkRwRiZCmHaQBmPgEXpCoS2TJ
-        args: new Args().addString('AS12ix1Qfpue7BB8q6mWVtjNdNE9UV3x4MaUo7WhdUubov8sJ3CuP')
-        .addString("AS12QFpzxNUkPja7kLKEwynnAoF223A1uxyt6VKaprkF5goD3jKZG")
-        .addString("AS1C5zRFkPy98m6shDz9WqTQvReciGEkgGzjr4DcVJcjEGyFkKS7")
-        .addU256(75n)
-       } as ISCData,
+        data: readFileSync(path.join(__dirname, 'build', 'oracle.wasm')), // smart contract bytecode
+        coins: fromMAS(1), // coins for deployment
+        args: new Args()
+        // arguments for deployment
+      } as ISCData,
       // Additional smart contracts can be added here for deployment
     ],
     chainId,
     fees,
-    maxGas, 
+    maxGas,
     waitFirstEvent,
   );
   process.exit(0); // terminate the process after deployment(s)

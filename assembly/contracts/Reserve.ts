@@ -180,7 +180,7 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
     const args = new Args(binaryArgs);
     const amount = args.nextU256().expect("Expected the borrow amount");
     const borrower = args.nextString().expect("Expected the borrower address");
-    const collateralAsset = args.nextString().expect("Expected collateral asset");
+    // const collateralAsset = args.nextString().expect("Expected collateral asset");
     let userB = getUserBal(borrower);
     generateEvent(userB.toString()+" balA")
 

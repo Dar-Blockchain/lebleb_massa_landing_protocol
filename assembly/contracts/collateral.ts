@@ -4,10 +4,11 @@ import { IERC20 } from '../interfaces/IERC20';
 import { IFactory } from "../interfaces/IFactory";
 import { IRouter } from "../interfaces/IRouter";
 
-
+import{IOracle} from "../interfaces/IOracle"
 
 import { u256 } from 'as-bignum/assembly';
 import { PersistentMap } from './lib/storage/mappingPersistant';
+
 export const FACTORY = new Address("AS125Y3UWiMoEx3w71jf7iq1RwkxXdwkEVdoucBTAmvyzGh2KUqXS");
 export const ROUTER = new Address("AS1XqtvX3rz2RWbnqLfaYVKEjM3VS5pny9yKDdXcmJ5C1vrcLEFd");
 export const ONE_UNIT = 10 ** 9;
@@ -23,25 +24,13 @@ const userCollaterals = new PersistentMap<string, u256>('user_collaterals');
 const userDebts = new PersistentMap<string, u256>('user_debts');
 const liquidationStatus = new PersistentMap<string, bool>('liquidation_status');
 
-export function _getTokenPrice(tokenA: Address, tokenB: Address): f64 {
-    const binStep: u64 = 100; // The step size for the liquidity bin
-    const router = new IRouter(ROUTER); // Initialize the router interface
-    const factory = new IFactory(FACTORY); // Initialize the factory interface
-
-    // Fetch the pair information from the factory
-    const pairInfo = factory.getLBPairInformation(tokenA, tokenB, binStep);
-    const pair = pairInfo.pair; // The liquidity pair contract
-
-    // Determine which token is represented as tokenY in the liquidity pool
-    const tokenAIsTokenY = pair.getTokenY()._origin == tokenA;
-
-    // Fetch the swap output for a small amount (1 unit) to calculate the price
-    const swapOut = router.getSwapOut(pair, u256.fromU64(1 * ONE_UNIT), !tokenAIsTokenY);
-    let amountOutu64=bytesToU64(u256ToBytes(swapOut.amountOut))
+export function _getTokenPrice(tokenA: string,OracleAddress: string): string {
+    
+    const oracle = new IOracle(new Address(OracleAddress)); // Initialize the router interface
+    const price = oracle.getPriceByAddress(tokenA)
     // Calculate the price by dividing the amount out by one unit
-    return f64(amountOutu64) / f64(ONE_UNIT);
+    return price ;
 }
-
 
 
 
