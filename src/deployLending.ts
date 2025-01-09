@@ -51,6 +51,7 @@ const deployerAccount = await WalletClient.getAccountFromSecretKey(secretKey);
         args: new Args()
         .addU256(75n)
         .addString("AS1FZXeCCDHma9Z5diHudCt9JZpiEB1sqXv9yiLFuEG94bAPZpjm")
+        .addString("AU12pC6NqE91tL5aws3eoqssoNmHaSXvkgz1vuzjxiDirywW92BWM")
         , // arguments for deployment
       } as ISCData,
       // Additional smart contracts can be added here for deployment

@@ -100,6 +100,14 @@ function stringToU256(value: string): u256 {
 export function getAtokenAddress(): StaticArray<u8> {
     return stringToBytes(Storage.get(regATokenAddress));
 }
+export function getUserCollateralAmount(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+    const args = new Args(binaryArgs);
+    const sender = args.nextString().expect("Expected the address");
+    let ancientUserBalance = userBalances.contains(sender) ? userBalances.getSome(sender) : u256.Zero;
+
+    return u256ToBytes(ancientUserBalance)
+
+}
 export function getUserBalance(binaryArgs: StaticArray<u8>): StaticArray<u8> {
     const args = new Args(binaryArgs);
     const sender = args.nextString().expect("Expected the address");
@@ -129,6 +137,45 @@ export function getUserDebtAmount(binaryArgs: StaticArray<u8>):StaticArray<u8>{
     }
 
     return u256ToBytes(userBorrowed);
+}
+export function liquidate(binaryArgs: StaticArray<u8>): void {
+    const lendingPoolAddress = Storage.get(Lending_Pool_Address);
+    assert(lendingPoolAddress == Context.caller().toString(), "Only Lending Pool can call deposit");
+
+    const args = new Args(binaryArgs);
+    const userAddress = args.nextString().expect("Expected user address");
+    const liquidatorAddress = args.nextString().expect("Expected liquidator address");
+
+    // Fetch and clear user's debt
+    const userDebt = userBorrows.contains(userAddress) ? userBorrows.getSome(userAddress) : u256.Zero;
+    assert(userDebt > u256.Zero, "User has no debt to repay");
+
+    // Fetch and clear user's collateral
+    const userCollateral = userBalances.contains(userAddress) ? userBalances.getSome(userAddress) : u256.Zero;
+    assert(userCollateral > u256.Zero, "User has no collateral to seize");
+
+    // Transfer collateral to liquidator
+    const tokenAddress = Storage.get(regTokenAddress);
+    const tokenERC20 = new IERC20(new Address(tokenAddress.toString()));
+    tokenERC20.transfer(new Address(liquidatorAddress), userCollateral);
+    generateEvent("Transferred " + userCollateral.toString() + " of " + tokenAddress + " to liquidator " + liquidatorAddress);
+
+    // Update Reserve Balance
+    const reserveBalance = bytesToU256(Storage.get(_ReserveBalanceKey));
+    const newReserveBalance = u256.sub(reserveBalance, userCollateral);
+    Storage.set(_ReserveBalanceKey, u256ToBytes(newReserveBalance));
+    generateEvent("Updated Reserve Balance: " + newReserveBalance.toString());
+
+    // Clear user's debt
+    userBorrows.delete(userAddress);
+    generateEvent("Cleared debt for user " + userAddress);
+
+    // Clear user's collateral
+    userBalances.delete(userAddress);
+    generateEvent("Cleared collateral for user " + userAddress);
+
+    // Emit Liquidation Event
+    generateEvent("Liquidated user " + userAddress + ". Collateral of " + userCollateral.toString() + " seized and debt of " + userDebt.toString() + " cleared.");
 }
 export function deposit(binaryArgs: StaticArray<u8>): void {
     const lendingPoolAddress = Storage.get(Lending_Pool_Address);
@@ -162,6 +209,9 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
     generateEvent("newUserBalance: " + newUserBalance.toString());
 
     userBalances.set(sender, newUserBalance);
+
+    calculateAndStoreRewards(new Args().add(sender).serialize());
+
     generateEvent("User deposit: " + amount.toString() + " address:"+sender);
     // updateInterestRates();
 
@@ -172,15 +222,13 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
 
 
 export function borrow(binaryArgs: StaticArray<u8>): void {
-    assert(!inFunction, "Reentrancy detected");
-    inFunction = true;
+   
     const lendingPoolAddress = Storage.get(Lending_Pool_Address);
     assert(lendingPoolAddress == Context.caller().toString(), "Only Lending Pool can call borrow");
 
     const args = new Args(binaryArgs);
     const amount = args.nextU256().expect("Expected the borrow amount");
     const borrower = args.nextString().expect("Expected the borrower address");
-    // const collateralAsset = args.nextString().expect("Expected collateral asset");
     let userB = getUserBal(borrower);
     generateEvent(userB.toString()+" balA")
 
@@ -208,22 +256,18 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
     generateEvent(tokenAddress.toString()+"__"+amount.toString()+"______");
     new IERC20(new Address(tokenAddress)).transfer(new Address(borrower), amount);
 
-    // Lock the collateral in the reserve
-    assert(userBalances.contains(borrower)," not found collateral")
-    let collateralUserBalance = userBalances.getSome(borrower);
-
-    let newCollateralUserBalance = u256.sub(collateralUserBalance, amount);
-    userBalances.set(borrower, newCollateralUserBalance);
-    // updateInterestRates();
+   
+    //updateInterestRates();
+    calculateAndStoreRewards(new Args().add(borrower).serialize());
 
     generateEvent("Borrowed " + amount.toString() + " to " + borrower);
     generateEvent("Locked " + amount.toString() + " of collateral from " + borrower);
-    inFunction = true;
-
+     
 }
 
 
 export function repay(binaryArgs: StaticArray<u8>): void {
+ 
     const lendingPoolAddress = Storage.get(Lending_Pool_Address);
     assert(lendingPoolAddress == Context.caller().toString(), "Only Lending Pool can call repay");
 
@@ -267,6 +311,7 @@ export function repay(binaryArgs: StaticArray<u8>): void {
         generateEvent("Collateral unlocked for " + borrower);
     }
     // updateInterestRates();
+    calculateAndStoreRewards(new Args().add(borrower).serialize());
 
     generateEvent("Repayment of " + amount.toString() + " received from " + borrower);
     generateEvent("Updated reserve amount: " + newReserveAmount.toString());
@@ -283,6 +328,7 @@ function getTotalBorrowedTokens(): u256 {
 
 function calculateRates(): RateInfo {
     const totalAssets = u256.add(getTotalDisponibleTokens(), getTotalBorrowedTokens());
+    assert(totalAssets != u256.Zero, "Total assets cannot be zero");
     const utilization = u256.div(u256.mul(getTotalBorrowedTokens(), SCALE_FACTOR), totalAssets);
 
     const borrowRate = u256.add(
@@ -429,6 +475,27 @@ function getTotalDisponibleTokens(): u256 {
 }
 
 
+export function claimRewards(binaryArgs: StaticArray<u8>): void {
+    const args = new Args(binaryArgs);
+    const userAddress = args.nextString().expect("Expected user address");
+
+    // Calculate and store the latest rewards before claiming
+    calculateAndStoreRewards(new Args().add(userAddress).serialize());
+
+    // Retrieve the total rewards available for the user
+    const totalRewards = userRewards.contains(userAddress) ? userRewards.getSome(userAddress) : u256.Zero;
+
+    assert(totalRewards > u256.Zero, "No rewards available to claim");
+
+    // Reset the user's rewards balance
+    userRewards.set(userAddress, u256.Zero);
+
+    // Transfer the rewards to the user
+    const tokenAddress = Storage.get(regTokenAddress);
+    new IERC20(new Address(tokenAddress)).transfer(new Address(userAddress), totalRewards);
+
+    generateEvent("User " + userAddress + " claimed rewards: " + totalRewards.toString());
+}
 
 
 

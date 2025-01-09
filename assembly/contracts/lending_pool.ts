@@ -19,11 +19,15 @@ const ADMIN_ADDRESS = stringToBytes("admin_address"); // Stores the admin addres
 
 const Oracle_Storage = stringToBytes("Oracle_Storage"); // Stores the admin address
 
+const LIQUIDATOR_ADDRESS_KEY = stringToBytes("liquidator_address");
 
 const userDebtAmounts = new PersistentMap<string, u256>('user_debt_amounts');
 // const userDebtAssets = new PersistentMap<string, string>('user_debt_assets');
 const userCollateralAssets = new PersistentMap<string, StaticArray<u8>>('user_collateral_assets');
 const userDebtAssets = new PersistentMap<string, StaticArray<u8>>('user_debt_assets');
+const userLiquidations = new PersistentMap<string, StaticArray<u8>>('user_liquidations');
+const liquidationAmounts = new PersistentMap<string, u256>('liquidation_amounts');
+let inFunction = false; // Reentrancy guard
 
 // Utility function to serialize an array of strings using Args
 function serializeStringArray(arr: Array<string>): StaticArray<u8> {
@@ -54,9 +58,13 @@ export function constructor(binaryArgs: StaticArray<u8>): void{
     
     const BrrowRate = args.nextU256().expect("Borrow Rate required");
     const OracleAddress = args.nextString().expect("Borrow Rate required");
+    const liquidatorAddress = args.nextString().expect("Liquidator Address required"); // New argument for liquidator
+
+   
 
     Storage.set(BORROWING_LIMIT_PERCENT,u256ToBytes(BrrowRate))
     Storage.set(Oracle_Storage, stringToBytes(OracleAddress));
+    Storage.set(LIQUIDATOR_ADDRESS_KEY, stringToBytes(liquidatorAddress)); // Store liquidator address
 
 
 
@@ -91,6 +99,8 @@ export function getReserve(binaryArgs: StaticArray<u8>): StaticArray<u8> {
 }
 
 export function deposit(binaryArgs: StaticArray<u8>): void {
+    assert(!inFunction, "Reentrancy detected");
+    inFunction = true;
     const args = new Args(binaryArgs);
     const userAddress = Context.caller().toString();
     const asset = args.nextString().expect("Expected asset");
@@ -123,9 +133,119 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
     generateEvent("Deposit of " + amount.toString() + " of " + asset + " by " + userAddress);
 
     call(new Address(AtokenAddress), "mint", new Args().add(Context.caller().toString()).add(amount), 4_000_000);
+    inFunction = false;
 
 }
-// Use u256 for all calculations to prevent overflow or precision loss
+export function isLiquidatable(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+    const args = new Args(binaryArgs);
+    const userAddress = args.nextString().expect("Expected user address");
+
+    const totalCollateralValue = calculateTotalCollateralValue(userAddress);
+    const totalDebtValue = calculateTotalDebtValue(userAddress);
+
+    // Calculate the required collateral based on collateral factor
+    const requiredCollateral = u256.mul(totalDebtValue, COLLATERAL_FACTOR);
+    
+    // Check if the actual collateral is less than required
+    const liquidatable = totalCollateralValue < requiredCollateral;
+
+    return liquidatable ? stringToBytes("true") : stringToBytes("false");
+}
+function recordLiquidation(userAddress: string, asset: string, amount: u256): void {
+    // Update userLiquidations
+    let liquidatedAssets: Array<string>;
+    if (userLiquidations.contains(userAddress)) {
+        liquidatedAssets = deserializeStringArray(userLiquidations.getSome(userAddress));
+    } else {
+        liquidatedAssets = [];
+    }
+
+    if (!liquidatedAssets.includes(asset)) {
+        liquidatedAssets.push(asset);
+        userLiquidations.set(userAddress, serializeStringArray(liquidatedAssets));
+    }
+
+    // Update liquidationAmounts
+    const key = `${userAddress}:${asset}`;
+    if (liquidationAmounts.contains(key)) {
+        const existingAmount = liquidationAmounts.getSome(key);
+        const updatedAmount = u256.add(existingAmount, amount);
+        liquidationAmounts.set(key, updatedAmount);
+    } else {
+        liquidationAmounts.set(key, amount);
+    }
+}
+export function liquidate(binaryArgs: StaticArray<u8>): void {
+    assert(!inFunction, "Reentrancy detected");
+    inFunction = true;
+
+    const args = new Args(binaryArgs);
+    const userAddress = args.nextString().expect("Expected user address");
+    const liquidatorAddressBytes = Storage.get(LIQUIDATOR_ADDRESS_KEY);
+    assert(liquidatorAddressBytes != null, "Liquidator address not set");
+    const liquidatorAddress = bytesToString(liquidatorAddressBytes);
+
+    // Check if the user is liquidatable
+    const liquidatable = isLiquidatable(new Args().add(userAddress).serialize());
+    // Check if the user is liquidatable
+    assert(bytesToString(liquidatable) == "true", "User is not eligible for liquidation");
+
+    // Fetch all collateral assets
+    const collateralAssetsSerialized = userCollateralAssets.getSome(userAddress);
+    const collateralAssets = deserializeStringArray(collateralAssetsSerialized).slice(0); // Clone the array to prevent mutation
+
+    // Loop through each collateral asset
+    for (let i = 0; i < collateralAssets.length; i++) {
+        const collateralAsset = collateralAssets[i];
+        const reserveAddress = bytesToString(getReserve(new Args().add(collateralAsset).serialize()));
+        const reserve = new IReserve(new Address(reserveAddress));
+
+        // Get user's collateral amount for this asset
+        const collateralAmount = reserve.getUserCollateralAmount(userAddress);
+        assert(collateralAmount > u256.Zero, "Collateral amount must be greater than zero");
+
+        // Call the Reserve's liquidate function
+        const reserveArgs = new Args().add(userAddress).add(liquidatorAddress) ;
+        call(new Address(reserveAddress), "liquidate", reserveArgs, 4_000_000);
+
+        // Record the liquidation
+        recordLiquidation(userAddress, collateralAsset, collateralAmount);
+    }
+
+    // Fetch all debt assets
+    const debtAssetsSerialized = userDebtAssets.getSome(userAddress);
+    const debtAssets = deserializeStringArray(debtAssetsSerialized).slice(0); // Clone the array to prevent mutation
+
+    // Loop through each debt asset
+    for (let i = 0; i < debtAssets.length; i++) {
+        const debtAsset = debtAssets[i];
+        const reserveAddress = bytesToString(getReserve(new Args().add(debtAsset).serialize()));
+        const reserve = new IReserve(new Address(reserveAddress));
+
+        // Get user's debt amount for this asset
+        const debtAmount = reserve.getUserDebtAmount(userAddress);
+        assert(debtAmount > u256.Zero, "Debt amount must be greater than zero");
+
+        // Transfer the debt asset from the liquidator to the reserve
+        let debtAssetERC20 = new IERC20(new Address(debtAsset));
+        debtAssetERC20.transferFrom(new Address(liquidatorAddress), new Address(reserveAddress), debtAmount);
+        generateEvent("Transferred " + debtAmount.toString() + " of " + debtAsset + " from liquidator " + liquidatorAddress + " to reserve " + reserveAddress);
+
+        // Call the Reserve's repay function
+        const repayArgs = new Args().add(debtAmount).add(userAddress);
+        call(new Address(reserveAddress), "repay", repayArgs, 4_000_000);
+    }
+
+    // Remove user's collateral and debt records
+    userCollateralAssets.delete(userAddress);
+    userDebtAssets.delete(userAddress);
+
+    // Emit liquidation event
+    generateEvent("User " + userAddress + " has been liquidated by " + liquidatorAddress + ". All collateral seized and debts cleared.");
+
+    inFunction = false;
+}
+
 function calculateTotalCollateralValue(userAddress: string): u256 {
     let totalCollateralValue = u256.Zero;
     const collateralAssetsSerialized = userCollateralAssets.getSome(userAddress);
@@ -174,6 +294,8 @@ function calculateTotalDebtValue(userAddress: string): u256 {
 
 
 export function borrow(binaryArgs: StaticArray<u8>): void {
+    assert(!inFunction, "Reentrancy detected");
+    inFunction = true;
     const args = new Args(binaryArgs);
     const borrowAsset = args.nextString().expect("Expected borrow asset");
     const amount = args.nextU256().expect("Expected amount");
@@ -220,6 +342,7 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
 
     call(new Address(borrowReserveAddress), "borrow", new Args().add(amount).add(userAddress), 4_000_000);
     generateEvent("Borrowed " + amount.toString() + " of " + borrowAsset + " by " + userAddress);
+    inFunction = false;
 }
 
 function remove<T>(array: Array<T>, element: T): Array<T> {
@@ -230,6 +353,8 @@ function remove<T>(array: Array<T>, element: T): Array<T> {
     return array;
 }
 export function repay(binaryArgs: StaticArray<u8>): void {
+    assert(!inFunction, "Reentrancy detected");
+    inFunction = true;
     const args = new Args(binaryArgs);
     const repayAsset = args.nextString().expect("Expected repay asset");
     const amount = args.nextU256().expect("Expected amount");
@@ -273,6 +398,7 @@ export function repay(binaryArgs: StaticArray<u8>): void {
     userDebtAssets.set(userAddress, serializeStringArray(updatedDebtAssets));
 
     generateEvent("Repaid " + amount.toString() + " of " + repayAsset + " by " + userAddress);
+    inFunction = false;
 }
 
 

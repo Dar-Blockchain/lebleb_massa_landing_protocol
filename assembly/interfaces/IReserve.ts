@@ -33,7 +33,7 @@ export class IReserve{
       getUserCollateralAmount(user:string):u256{
         const res = call(
           this._origin,
-          'getUserBalance',
+          'getUserCollateralAmount',
           new Args().add(user),
           0,
         );
@@ -52,7 +52,20 @@ export class IReserve{
 
         
       }
+      liquidate(user:string,liquidator:string):u256{
+        const res = call(
+          this._origin,
+          'getUserDebtAmount',
+          new Args().add(user).add(liquidator),
+          0,
+        );
+        return bytesToU256(res);
 
+        
+      }
+
+
+      
 
       
       
