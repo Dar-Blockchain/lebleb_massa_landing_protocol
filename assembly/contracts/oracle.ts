@@ -34,10 +34,13 @@ const tokens = new PersistentMap<string, TokenData>('user_rewards');
 
 // Index to map address to symbol for faster lookups
 const addressIndex = new PersistentMap<string, string>('address_index');
-
+const ADMIN_ADDRESS = stringToBytes("admin_address");
 // Add new token data (only admin can call this)
 export function addToken(binaryArgs: StaticArray<u8>): void {
+    onlyAdmin()
+
     const args = new Args(binaryArgs);
+
     const symbol = args.nextString().expect("Failed to parse symbol");
     const address = args.nextString().expect("Failed to parse address");
     const price = args.nextString().expect("Failed to parse price");
@@ -61,6 +64,8 @@ export function addToken(binaryArgs: StaticArray<u8>): void {
 
 // Update the price of existing tokens (only admin can call this)
 export function updatePrices(binaryArgs: StaticArray<u8>): void {
+    onlyAdmin()
+
     const args = new Args(binaryArgs);
 
     const symbolArray = args.nextStringArray().expect('Failed to parse symbols');
@@ -122,13 +127,18 @@ export function getPriceByAddress(binaryArgs: StaticArray<u8>): StaticArray<u8> 
         throw new Error('Token with address ' + address + ' not found.');
     }
 }
-
+function onlyAdmin(): void {
+    const admin = Storage.get(ADMIN_ADDRESS);
+    assert(admin != null && bytesToString(admin) == Context.caller().toString(), "Unauthorized: Only admin can perform this action");
+}
 // Constructor function to initialize the oracle contract
 export function constructor(binaryArgs: StaticArray<u8>): void {
     // In this case, we simulate the constructor as initializing the oracle contract by adding a sample token
+
     const initialSymbol = "USDT";
     const initialAddress = "0xdac17f958d2ee523a2206206994597c13d831ec7";
     const initialPrice = "1.0"; // Example price
+    Storage.set(ADMIN_ADDRESS, stringToBytes(Context.caller().toString()));
 
     // Add new token data only if the token does not already exist
     if (!tokens.contains(initialSymbol)) {

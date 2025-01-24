@@ -41,6 +41,17 @@ export class IReserve{
 
         
       }
+      withdrawAllCollateral(user:string):u256{
+        const res = call(
+          this._origin,
+          'getUserDebtAmount',
+          new Args().add(user),
+          0,
+        );
+        return bytesToU256(res);
+
+        
+      }
       getUserDebtAmount(user:string):u256{
         const res = call(
           this._origin,
