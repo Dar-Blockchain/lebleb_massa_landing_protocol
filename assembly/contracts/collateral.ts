@@ -24,7 +24,7 @@ const userCollaterals = new PersistentMap<string, u256>('user_collaterals');
 const userDebts = new PersistentMap<string, u256>('user_debts');
 const liquidationStatus = new PersistentMap<string, bool>('liquidation_status');
 
-export function _getTokenPrice(tokenA: string,OracleAddress: string): string {
+export function _getTokenPrice(tokenA: string,OracleAddress: string): u256 {
     
     const oracle = new IOracle(new Address(OracleAddress)); // Initialize the router interface
     const price = oracle.getPriceByAddress(tokenA)

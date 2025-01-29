@@ -238,8 +238,7 @@ function calculateTotalCollateralValue(userAddress: string): u256 {
 
         const collateralAmount = reserve.getUserCollateralAmount(userAddress);
         const oracleAddress = Storage.get(Oracle_Storage);
-        let prices = _getTokenPrice(collateralAsset, bytesToString(oracleAddress));
-        const collateralValue = u256.fromBytes(stringToBytes(prices));
+        let collateralValue = _getTokenPrice(collateralAsset, bytesToString(oracleAddress));
 
         let partialValue = u256.mul(collateralValue, collateralAmount);
 
@@ -266,8 +265,7 @@ function calculateTotalDebtValue(userAddress: string): u256 {
 
             const debtAmount = reserve.getUserDebtAmount(userAddress);
             const oracleAddress = Storage.get(Oracle_Storage);
-            let prices = _getTokenPrice(debtAsset, bytesToString(oracleAddress));
-            const debtValue = u256.fromBytes(stringToBytes(prices));
+            let debtValue = _getTokenPrice(debtAsset, bytesToString(oracleAddress));
 
             let partialValue = u256.mul(debtValue, debtAmount);
 
@@ -299,8 +297,7 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
     generateEvent("borrow3");
 
     const oracleAddress = Storage.get(Oracle_Storage);
-    let prices = _getTokenPrice(borrowAsset, bytesToString(oracleAddress));
-    const _borrowingPrice = u256.fromBytes(stringToBytes(prices));
+    let _borrowingPrice = _getTokenPrice(borrowAsset, bytesToString(oracleAddress));
     generateEvent("borrow4");
 
     const borrowingLimitRate = Storage.get(BORROWING_LIMIT_PERCENT);

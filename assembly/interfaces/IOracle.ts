@@ -10,14 +10,14 @@ import {
   
 export class IOracle{
      constructor(public _origin: Address) {}
-     getPriceByAddress(token:string): string {
+     getPriceByAddress(token:string): u256 {
         const res = call(
           this._origin,
           'getPriceByAddress',
           new Args().add(token),
           0,
         );
-        return bytesToString(res);
+        return u256.fromBytes(res);
       }
 
      
