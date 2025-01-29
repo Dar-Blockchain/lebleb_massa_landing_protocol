@@ -39,7 +39,9 @@ A compromised admin key can update addresses or parameters, drain funds, manipul
 - Audit all admin-only code paths to ensure no backdoor logic can drain the protocol.
 
 ## 4. Floating-Point Arithmetic Issues (high)
-// changed from old version , i use u256 for all arethmetic operation
+// Solved on all the code reverve and lending pool
+
+
 The code uses floating-point (f64) for price calculations and some other financial metrics. This can lead to precision loss, especially for large token amounts or small decimals. Attackers could exploit rounding errors to:
 - Slightly overborrow or undercollateralize.
 - Manipulate the liquidation or interest calculations.

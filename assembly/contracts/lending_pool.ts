@@ -1,5 +1,5 @@
 import { Context, generateEvent, Address, call, Storage } from '@massalabs/massa-as-sdk';
-import { Args, bytesToString, f64ToBytes, stringToBytes, u256ToBytes, bytesToU64, bytesToU256, bytesToF64 } from '@massalabs/as-types';
+import { Args, bytesToString,  stringToBytes, u256ToBytes, bytesToU64, bytesToU256 } from '@massalabs/as-types';
 
 import { IERC20 } from '../interfaces/IERC20';
 import { IReserve } from '../interfaces/IReserve';
@@ -59,17 +59,6 @@ export function constructor(binaryArgs: StaticArray<u8>): void {
     Storage.set(LIQUIDATOR_ADDRESS_KEY, stringToBytes(liquidatorAddress)); // Store liquidator address
 }
 
-/*
-// Example of a direct getTokenPrice function you had commented out
-export function getTokenPrice(binaryArgs: StaticArray<u8>): StaticArray<u8> {
-    const args = new Args(binaryArgs);
-    const tokenA = args.nextString().expect("Error while getting asset address");
-    const oracleAddress = Storage.get(Oracle_Storage);
-    let prices = _getTokenPrice(tokenA, bytesToString(oracleAddress));
-    generateEvent("price token is " + prices);
-    return f64ToBytes(prices);
-}
-*/
 
 export function addReserve(binaryArgs: StaticArray<u8>): void {
     onlyAdmin();
@@ -120,7 +109,7 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
 
     // Mint aTokens
     const AtokenAddress: string = new IReserve(new Address(reserveAddress)).getAtokenAddress();
-    generateEvent("Deposit of " + amount.toString() + " of " + asset + " by " + userAddress);
+    generateEvent("Deposit of " + bytesToString(u256ToBytes(amount)) + " of " + asset + " by " + userAddress);
     call(new Address(AtokenAddress), "mint", new Args().add(Context.caller().toString()).add(amount), 4_000_000);
 
     inFunction = false;
@@ -222,7 +211,7 @@ export function liquidate(binaryArgs: StaticArray<u8>): void {
         // Transfer from liquidator to Reserve
         let debtAssetERC20 = new IERC20(new Address(debtAsset));
         debtAssetERC20.transferFrom(new Address(liquidatorAddress), new Address(reserveAddress), debtAmount);
-        generateEvent("Transferred " + debtAmount.toString() + " of " + debtAsset + " from liquidator " + liquidatorAddress + " to reserve " + reserveAddress);
+        generateEvent("Transferred " + bytesToString(u256ToBytes(debtAmount)) + " of " + debtAsset + " from liquidator " + liquidatorAddress + " to reserve " + reserveAddress);
 
         // Call repay in Reserve
         const repayArgs = new Args().add(debtAmount).add(userAddress);
@@ -250,10 +239,9 @@ function calculateTotalCollateralValue(userAddress: string): u256 {
         const collateralAmount = reserve.getUserCollateralAmount(userAddress);
         const oracleAddress = Storage.get(Oracle_Storage);
         let prices = _getTokenPrice(collateralAsset, bytesToString(oracleAddress));
-        const collateralValueF64 = bytesToF64(stringToBytes(prices));
+        const collateralValue = u256.fromBytes(stringToBytes(prices));
 
-        // partialValue = (collateralValueF64 * collateralAmount)
-        let partialValue = u256.mul(u256.fromF64(collateralValueF64), collateralAmount);
+        let partialValue = u256.mul(collateralValue, collateralAmount);
 
         // Overflow check
         assert(partialValue >= collateralAmount, "Overflow risk: partialValue < collateralAmount");
@@ -279,10 +267,9 @@ function calculateTotalDebtValue(userAddress: string): u256 {
             const debtAmount = reserve.getUserDebtAmount(userAddress);
             const oracleAddress = Storage.get(Oracle_Storage);
             let prices = _getTokenPrice(debtAsset, bytesToString(oracleAddress));
-            const debtValueF64 = bytesToF64(stringToBytes(prices));
+            const debtValue = u256.fromBytes(stringToBytes(prices));
 
-            // partialValue = (debtValueF64 * debtAmount)
-            let partialValue = u256.mul(u256.fromF64(debtValueF64), debtAmount);
+            let partialValue = u256.mul(debtValue, debtAmount);
 
             // Overflow check
             assert(partialValue >= debtAmount, "Overflow risk in totalDebtValue partialValue < debtAmount");
@@ -313,12 +300,12 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
 
     const oracleAddress = Storage.get(Oracle_Storage);
     let prices = _getTokenPrice(borrowAsset, bytesToString(oracleAddress));
-    const _borrowingPrice = bytesToF64(stringToBytes(prices));
+    const _borrowingPrice = u256.fromBytes(stringToBytes(prices));
     generateEvent("borrow4");
 
     const borrowingLimitRate = Storage.get(BORROWING_LIMIT_PERCENT);
     // totalBorrowingPrice = borrowingPrice * amount
-    let totalBorrowingPrice = u256.mul(u256.fromF64(_borrowingPrice), amount);
+    let totalBorrowingPrice = u256.mul(_borrowingPrice, amount);
     assert(totalBorrowingPrice >= amount, "Overflow risk: totalBorrowingPrice < amount");
 
     // maxBorrowableAmount = (totalCollateralValue * BORROWING_LIMIT_PERCENT) / 100
@@ -353,7 +340,7 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
 
     // Call Reserve.borrow
     call(new Address(borrowReserveAddress), "borrow", new Args().add(amount).add(userAddress), 4_000_000);
-    generateEvent("Borrowed " + amount.toString() + " of " + borrowAsset + " by " + userAddress);
+    generateEvent("Borrowed " + bytesToString(u256ToBytes(amount)) + " of " + borrowAsset + " by " + userAddress);
 
     inFunction = false;
 }
@@ -457,7 +444,7 @@ export function repay(binaryArgs: StaticArray<u8>): void {
     }
     userDebtAssets.set(userAddress, serializeStringArray(updatedDebtAssets));
 
-    generateEvent("Repaid " + amount.toString() + " of " + repayAsset + " by " + userAddress);
+    generateEvent("Repaid " + bytesToString(u256ToBytes(amount)) + " of " + repayAsset + " by " + userAddress);
     inFunction = false;
 }
 
@@ -473,11 +460,11 @@ export function getRewardsForAsset(binaryArgs: StaticArray<u8>): void {
     const rewards = call(new Address(reserveAddress), "calculateAndStoreRewards", new Args().add(userAddress), 4_000_000);
 
     // Convert to u256
-    const rewardsAmount = u256.fromF64(bytesToF64(rewards));
+    const rewardsAmount = u256.fromBytes(rewards);
     const AtokenAddress: string = new IReserve(new Address(reserveAddress)).getAtokenAddress();
 
     // Mint aTokens to user
     call(new Address(AtokenAddress), "mint", new Args().add(Context.caller().toString()).add(rewardsAmount), 4_000_000);
 
-    generateEvent("Rewards minted for user: " + userAddress + " in aTokens, amount: " + rewardsAmount.toString());
+    generateEvent("Rewards minted for user: " + userAddress + " in aTokens, amount: " + bytesToString(u256ToBytes(rewardsAmount)));
 }

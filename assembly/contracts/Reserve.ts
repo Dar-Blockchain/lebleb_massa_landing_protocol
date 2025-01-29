@@ -45,7 +45,7 @@ class RateInfo {
     }
 
     toString(): string {
-        return `Borrow Rate: ${this.borrowRate.toString()}, Reward Rate: ${this.rewardRate.toString()}`;
+        return `Borrow Rate: ${bytesToString(u256ToBytes(this.borrowRate))}, Reward Rate: ${bytesToString(u256ToBytes(this.rewardRate))}`;
     }
 }
 
@@ -146,12 +146,11 @@ export function liquidate(binaryArgs: StaticArray<u8>): void {
     const tokenAddress = Storage.get(regTokenAddress);
     const tokenERC20 = new IERC20(new Address(tokenAddress.toString()));
     tokenERC20.transfer(new Address(liquidatorAddress), userCollateral);
-    generateEvent("Transferred " + userCollateral.toString() + " of " + tokenAddress + " to liquidator " + liquidatorAddress);
 
     // Update Reserve Balance
     const newReserveBalance = u256.sub(reserveBalance, userCollateral);
     Storage.set(_ReserveBalanceKey, u256ToBytes(newReserveBalance));
-    generateEvent("Updated Reserve Balance: " + newReserveBalance.toString());
+    generateEvent("Updated Reserve Balance: " + bytesToString(u256ToBytes(newReserveBalance)));
 
     // Clear user's debt
     userBorrows.delete(userAddress);
@@ -162,7 +161,7 @@ export function liquidate(binaryArgs: StaticArray<u8>): void {
     generateEvent("Cleared collateral for user " + userAddress);
 
     // Emit Liquidation Event
-    generateEvent("Liquidated user " + userAddress + ". Collateral of " + userCollateral.toString() + " seized and debt of " + userDebt.toString() + " cleared.");
+    generateEvent("Liquidated user " + userAddress + ". Collateral of " + bytesToString(u256ToBytes(userCollateral))+ " seized and debt of " + bytesToString(u256ToBytes(userDebt))+ " cleared.");
 }
 
 export function deposit(binaryArgs: StaticArray<u8>): void {
@@ -174,7 +173,6 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
     const sender = args.nextString().expect("Expected the sender address");
     assert(amount > u256.Zero, "Deposit amount must be greater than zero");
 
-    generateEvent("amount XXXXXX : " + amount.toString());
 
     const reserve = Storage.get(_ReserveBalanceKey);
     let reserveAmount = bytesToU256(reserve);
@@ -196,15 +194,12 @@ export function deposit(binaryArgs: StaticArray<u8>): void {
     assert(u256.add(ancientUserBalance, amount) >= ancientUserBalance, "Overflow risk: newUserBalance < old userBalance");
 
     let newUserBalance = u256.add(ancientUserBalance, amount);
-    generateEvent("newUserBalance: " + newUserBalance.toString());
 
     userBalances.set(sender, newUserBalance);
 
     calculateAndStoreRewards(new Args().add(sender).serialize());
 
-    generateEvent("User deposit: " + amount.toString() + " address:" + sender);
-    generateEvent("Reserve added with amount: " + amount.toString());
-    generateEvent("Updated reserve amount: " + newReserveAmount.toString());
+   
 }
 
 export function borrow(binaryArgs: StaticArray<u8>): void {
@@ -216,7 +211,6 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
     const borrower = args.nextString().expect("Expected the borrower address");
 
     let userB = getUserBal(borrower);
-    generateEvent(userB.toString() + " balA");
 
     let userBorrowed: u256;
     if (userBorrows.contains(borrower)) {
@@ -242,13 +236,12 @@ export function borrow(binaryArgs: StaticArray<u8>): void {
     Storage.set(TOTAL_BORROWED_TOKENS_KEY, u256ToBytes(totalBorrowed));
 
     const tokenAddress = Storage.get(regTokenAddress);
-    generateEvent(tokenAddress.toString() + "__" + amount.toString() + "______");
     new IERC20(new Address(tokenAddress)).transfer(new Address(borrower), amount);
 
     calculateAndStoreRewards(new Args().add(borrower).serialize());
 
-    generateEvent("Borrowed " + amount.toString() + " to " + borrower);
-    generateEvent("Locked " + amount.toString() + " of collateral from " + borrower);
+    generateEvent("Borrowed " + bytesToString(u256ToBytes(amount)) + " to " + borrower);
+    generateEvent("Locked " + bytesToString(u256ToBytes(amount)) + " of collateral from " + borrower);
 }
 
 export function withdrawAllCollateral(binaryArgs: StaticArray<u8>): void {
@@ -279,11 +272,7 @@ export function withdrawAllCollateral(binaryArgs: StaticArray<u8>): void {
     userBalances.set(userAddress, u256.Zero);
     new IERC20(new Address(tokenAddress)).transfer(new Address(userAddress), userCollateral);
 
-    // 5. Zero out user’s collateral balance in this Reserve
-    generateEvent(
-        "User " + userAddress + " withdrew all collateral: " + userCollateral.toString() +
-        " from Reserve: " + tokenAddress.toString()
-    );
+   
 }
 
 export function repay(binaryArgs: StaticArray<u8>): void {
@@ -348,8 +337,6 @@ export function repay(binaryArgs: StaticArray<u8>): void {
 
     calculateAndStoreRewards(new Args().add(borrower).serialize());
 
-    generateEvent("Repayment of " + amount.toString() + " received from " + borrower);
-    generateEvent("Updated reserve amount: " + newReserveAmount.toString());
 }
 
 function getTotalBorrowedTokens(): u256 {
@@ -427,21 +414,16 @@ export function calculateAndStoreRewards(binaryArgs: StaticArray<u8>): void {
         );
     }
 
-    generateEvent("userBalance: " + userBalance.toString() +
-                  " - rewardRate: " + rewardRate.toString() +
-                  " - timeDifference: " + timeDifference.toString());
-
-    generateEvent("Rewards calculated for user: " + userAddress + " - Rewards: " + rewards.toString());
+   
 
     const existingRewards = userRewards.contains(userAddress) ? userRewards.getSome(userAddress) : u256.Zero;
-    generateEvent("********" + existingRewards.toString());
 
     const newTotalRewards = u256.add(existingRewards, rewards);
 
     userRewards.set(userAddress, newTotalRewards);
     setLastRewardTime(userAddress, currentTime);
 
-    generateEvent("Total rewards updated for user: " + userAddress + " - Total Rewards: " + newTotalRewards.toString());
+    generateEvent("Total rewards updated for user: " + userAddress + " - Total Rewards: " + bytesToString(u256ToBytes(newTotalRewards)));
 }
 
 export function calculateAccruedInterest(binaryArgs: StaticArray<u8>): StaticArray<u8> {
@@ -450,7 +432,6 @@ export function calculateAccruedInterest(binaryArgs: StaticArray<u8>): StaticArr
 
     const rateInfo = calculateRates();
     const borrowRate = rateInfo.borrowRate;
-    generateEvent("borrowRate: " + borrowRate.toString());
 
     const userDebt = userBorrows.contains(userAddress) ? userBorrows.getSome(userAddress) : u256.Zero;
     const lastInterestTime = getLastRewardTime(userAddress);
@@ -471,7 +452,7 @@ export function calculateAccruedInterest(binaryArgs: StaticArray<u8>): StaticArr
         secondsInYear
     );
 
-    generateEvent("Accrued interest for user: " + userAddress + " is " + interest.toString());
+    generateEvent("Accrued interest for user: " + userAddress + " is " + bytesToString(u256ToBytes(interest)));
 
     // Update the last interest calculation time
     setLastRewardTime(userAddress, currentTime);
@@ -498,5 +479,5 @@ export function claimRewards(binaryArgs: StaticArray<u8>): void {
     const tokenAddress = Storage.get(regTokenAddress);
     new IERC20(new Address(tokenAddress)).transfer(new Address(userAddress), totalRewards);
 
-    generateEvent("User " + userAddress + " claimed rewards: " + totalRewards.toString());
+    generateEvent("User " + userAddress + " claimed rewards: " + bytesToString(u256ToBytes(totalRewards)));
 }
